@@ -92,12 +92,23 @@ func (st *CAASState) strictLocalID(ID string) (string, error) {
 	return localID, nil
 }
 
+func (st *CAASState) ControllerUUID() string {
+	return st.controllerTag.Id()
+}
+
 func (st *CAASState) ModelUUID() string {
 	return st.modelTag.Id()
 }
 
-func (st *CAASState) Model() (*CAASModel, error) {
-	return nil, nil // XXX
+func (st *CAASState) CAASModel() (*CAASModel, error) {
+       models, closer := st.database.GetCollection(caasModelsC)
+       defer closer()
+
+       model := &CAASModel{st: st}
+       if err := model.refresh(models.FindId(st.ModelUUID())); err != nil {
+               return nil, errors.Trace(err)
+       }
+       return model, nil
 }
 
 func (st *CAASState) Close() error {

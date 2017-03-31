@@ -128,7 +128,8 @@ func (c *showModelCommand) Run(ctx *cmd.Context) (err error) {
 	if results[0].Error != nil {
 		return results[0].Error
 	}
-	infoMap, err := c.apiModelInfoToModelInfoMap([]params.ModelInfo{*results[0].Result})
+	// XXX CAAS
+	infoMap, err := c.apiModelInfoToModelInfoMap([]params.ModelInfo{*results[0].IAASModel})
 	if err != nil {
 		return errors.Trace(err)
 	}

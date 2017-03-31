@@ -515,6 +515,11 @@ func (m *Model) Name() string {
 	return m.doc.Name
 }
 
+// Type returns the type of the model.
+func (m *Model) Type() string {
+	return "iaas"
+}
+
 // Cloud returns the name of the cloud to which the model is deployed.
 func (m *Model) Cloud() string {
 	return m.doc.Cloud

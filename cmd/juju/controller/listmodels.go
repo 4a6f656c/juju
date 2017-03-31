@@ -114,7 +114,8 @@ func (c *modelsCommand) SetFlags(f *gnuflag.FlagSet) {
 // ModelSet contains the set of models known to the client,
 // and UUID of the current model.
 type ModelSet struct {
-	Models []common.ModelInfo `yaml:"models" json:"models"`
+	IAASModels []common.ModelInfo `yaml:"models" json:"models"`
+	CAASModels []common.CAASModelInfo `yaml:"caas-models" json:"caas-models"`
 
 	// CurrentModel is the name of the current model, qualified for the
 	// user for which we're listing models. i.e. for the user admin,
@@ -150,24 +151,33 @@ func (c *modelsCommand) Run(ctx *cmd.Context) error {
 	}
 
 	// And now get the full details of the models.
-	paramsModelInfo, err := c.getModelInfo(models)
+	paramIAASModelInfo, paramCAASModelInfo, err := c.getModelInfo(models)
 	if err != nil {
 		return errors.Annotate(err, "cannot get model details")
 	}
 
 	// TODO(perrito666) 2016-05-02 lp:1558657
 	now := time.Now()
-	modelInfo := make([]common.ModelInfo, 0, len(models))
-	for _, info := range paramsModelInfo {
+	caasModelInfo := make([]common.CAASModelInfo, 0, len(paramCAASModelInfo))
+	for _, info := range paramCAASModelInfo {
+		model, err := common.CAASModelInfoFromParams(info, now)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		model.ControllerName = c.ControllerName()
+		caasModelInfo = append(caasModelInfo, model)
+	}
+	iaasModelInfo := make([]common.ModelInfo, 0, len(paramIAASModelInfo))
+	for _, info := range paramIAASModelInfo {
 		model, err := common.ModelInfoFromParams(info, now)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		model.ControllerName = c.ControllerName()
-		modelInfo = append(modelInfo, model)
+		iaasModelInfo = append(iaasModelInfo, model)
 	}
+	modelSet := ModelSet{CAASModels: caasModelInfo, IAASModels: iaasModelInfo}
 
-	modelSet := ModelSet{Models: modelInfo}
 	current, err := c.ClientStore().CurrentModel(c.ControllerName())
 	if err != nil && !errors.IsNotFound(err) {
 		return err
@@ -196,10 +206,10 @@ func (c *modelsCommand) Run(ctx *cmd.Context) error {
 	return nil
 }
 
-func (c *modelsCommand) getModelInfo(userModels []base.UserModel) ([]params.ModelInfo, error) {
+func (c *modelsCommand) getModelInfo(userModels []base.UserModel) ([]params.ModelInfo, []params.CAASModelInfo, error) {
 	client, err := c.getModelManagerAPI()
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, nil, errors.Trace(err)
 	}
 	defer client.Close()
 
@@ -209,10 +219,10 @@ func (c *modelsCommand) getModelInfo(userModels []base.UserModel) ([]params.Mode
 	}
 	results, err := client.ModelInfo(tags)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, nil, errors.Trace(err)
 	}
 
-	info := []params.ModelInfo{}
+	iaasInfo, caasInfo := []params.ModelInfo{}, []params.CAASModelInfo{}
 	for i, result := range results {
 		if result.Error != nil {
 			if params.IsCodeUnauthorized(result.Error) {
@@ -221,14 +231,19 @@ func (c *modelsCommand) getModelInfo(userModels []base.UserModel) ([]params.Mode
 				// to query its details.
 				continue
 			}
-			return nil, errors.Annotatef(
+			return nil, nil, errors.Annotatef(
 				result.Error, "getting model %s (%q) info",
 				userModels[i].UUID, userModels[i].Name,
 			)
 		}
-		info = append(info, *result.Result)
+		if result.CAASModel != nil {
+			caasInfo = append(caasInfo, *result.CAASModel)
+		}
+		if result.IAASModel != nil {
+			iaasInfo = append(iaasInfo, *result.IAASModel)
+		}
 	}
-	return info, nil
+	return iaasInfo, caasInfo, nil
 }
 
 func (c *modelsCommand) getAllModels() ([]base.UserModel, error) {
@@ -277,13 +292,13 @@ func (c *modelsCommand) formatTabular(writer io.Writer, value interface{}) error
 	}
 	// Only owners, or users with write access or above get to see machines and cores.
 	haveMachineInfo := false
-	for _, m := range modelSet.Models {
+	for _, m := range modelSet.IAASModels {
 		if haveMachineInfo = len(m.Machines) > 0; haveMachineInfo {
 			break
 		}
 	}
 	if haveMachineInfo {
-		w.Println("Cloud/Region", "Status", "Machines", "Cores", "Access", "Last connection")
+		w.Println("Type", "Cloud/Region", "Status", "Machines", "Cores", "Access", "Last connection")
 		offset := 0
 		if c.listUUID {
 			offset++
@@ -291,9 +306,9 @@ func (c *modelsCommand) formatTabular(writer io.Writer, value interface{}) error
 		tw.SetColumnAlignRight(3 + offset)
 		tw.SetColumnAlignRight(4 + offset)
 	} else {
-		w.Println("Cloud/Region", "Status", "Access", "Last connection")
+		w.Println("Type", "Cloud/Region", "Status", "Access", "Last connection")
 	}
-	for _, model := range modelSet.Models {
+	for _, model := range modelSet.IAASModels {
 		cloudRegion := strings.Trim(model.Cloud+"/"+model.CloudRegion, "/")
 		owner := names.NewUserTag(model.Owner)
 		name := common.OwnerQualifiedModelName(model.Name, owner, userForListing)
@@ -306,6 +321,7 @@ func (c *modelsCommand) formatTabular(writer io.Writer, value interface{}) error
 		if c.listUUID {
 			w.Print(model.UUID)
 		}
+		w.Print("IAAS")
 		lastConnection := model.Users[userForLastConn.Id()].LastConnection
 		if lastConnection == "" {
 			lastConnection = "never connected"
@@ -329,6 +345,20 @@ func (c *modelsCommand) formatTabular(writer io.Writer, value interface{}) error
 			w.Print(machineInfo, coresInfo)
 		}
 		w.Println(access, lastConnection)
+	}
+	for _, model := range modelSet.CAASModels {
+		owner := names.NewUserTag(model.Owner)
+		name := common.OwnerQualifiedModelName(model.Name, owner, userForListing)
+		if jujuclient.JoinOwnerModelName(owner, model.Name) == modelSet.CurrentModelQualified {
+			name += "*"
+			w.PrintColor(output.CurrentHighlight, name)
+		} else {
+			w.Print(name)
+		}
+		if c.listUUID {
+			w.Print(model.UUID)
+		}
+		w.Print("CAAS")
 	}
 	tw.Flush()
 	return nil

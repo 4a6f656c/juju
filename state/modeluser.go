@@ -170,24 +170,64 @@ func (st *State) removeModelUser(user names.UserTag) error {
 	return nil
 }
 
+type UserModelInfo interface {
+	Name() string
+	UUID() string
+	Type() string
+	Owner() names.UserTag
+}
+
 // UserModel contains information about an model that a
 // user has access to.
 type UserModel struct {
-	*Model
+	iaasModel *Model
+	caasModel *CAASModel
+
+	model UserModelInfo
+
 	User names.UserTag
+}
+
+func (um *UserModel) Name() string {
+	return um.model.Name()
+}
+
+func (um *UserModel) UUID() string {
+	return um.model.UUID()
+}
+
+func (um *UserModel) Type() string {
+	return um.model.Type()
+}
+
+func (um *UserModel) Owner() names.UserTag {
+	return um.model.Owner()
+}
+
+func (um *UserModel) CAASModel() *CAASModel {
+	return um.caasModel
+}
+
+func (um *UserModel) IAASModel() *Model {
+	return um.iaasModel
 }
 
 // LastConnection returns the last time the user has connected to the
 // model.
-func (e *UserModel) LastConnection() (time.Time, error) {
-	lastConnections, lastConnCloser := e.st.getRawCollection(modelUserLastConnectionC)
+func (um *UserModel) LastConnection() (time.Time, error) {
+	// XXX implement for CAAS.
+	if um.iaasModel == nil {
+		return time.Time{}, errors.Trace(NeverConnectedError(um.User.Id()))
+	}
+
+	lastConnections, lastConnCloser := um.iaasModel.st.getRawCollection(modelUserLastConnectionC)
 	defer lastConnCloser()
 
 	lastConnDoc := modelUserLastConnectionDoc{}
-	id := ensureModelUUID(e.ModelTag().Id(), strings.ToLower(e.User.Id()))
+	id := ensureModelUUID(um.iaasModel.ModelTag().Id(), strings.ToLower(um.User.Id()))
 	err := lastConnections.FindId(id).Select(bson.D{{"last-connection", 1}}).One(&lastConnDoc)
 	if (err != nil && err != mgo.ErrNotFound) || lastConnDoc.LastConnection.IsZero() {
-		return time.Time{}, errors.Trace(NeverConnectedError(e.User.Id()))
+		return time.Time{}, errors.Trace(NeverConnectedError(um.User.Id()))
 	}
 
 	return lastConnDoc.LastConnection, nil
@@ -195,14 +235,24 @@ func (e *UserModel) LastConnection() (time.Time, error) {
 
 // allUserModels returns a list of all models with the user they belong to.
 func (st *State) allUserModels() ([]*UserModel, error) {
-	models, err := st.AllModels()
+	var result []*UserModel
+
+	iaasModels, err := st.AllModels()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	var result []*UserModel
-	for _, model := range models {
-		result = append(result, &UserModel{Model: model, User: model.Owner()})
+	for _, model := range iaasModels {
+		result = append(result, &UserModel{iaasModel: model, model: model, User: model.Owner()})
 	}
+
+	caasModels, err := st.AllCAASModels()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	for _, model := range caasModels {
+		result = append(result, &UserModel{caasModel: model, model: model, User: model.Owner()})
+	}
+
 	return result, nil
 }
 
@@ -220,6 +270,9 @@ func (st *State) ModelsForUser(user names.UserTag) ([]*UserModel, error) {
 	if err != nil && !errors.IsNotFound(err) {
 		return nil, errors.Trace(err)
 	}
+
+	// XXX CAAS
+
 	// Since there are no groups at this stage, the simplest way to get all
 	// the models that a particular user can see is to look through the
 	// model user collection. A raw collection is required to support
@@ -242,7 +295,7 @@ func (st *State) ModelsForUser(user names.UserTag) ([]*UserModel, error) {
 		}
 
 		if model.Life() != Dead && model.MigrationMode() != MigrationModeImporting {
-			result = append(result, &UserModel{Model: model, User: user})
+			result = append(result, &UserModel{iaasModel: model, model: model, User: user})
 		}
 	}
 

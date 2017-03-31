@@ -114,8 +114,9 @@ func (c *showBudgetCommand) resolveModelNames(budget *wireformat.BudgetWithAlloc
 			continue
 		}
 		for i, allocation := range budget.Allocations {
-			if info.Result.UUID == allocation.Model {
-				budget.Allocations[i].Model = info.Result.Name
+			// XXX CAAS
+			if info.IAASModel.UUID == allocation.Model {
+				budget.Allocations[i].Model = info.IAASModel.Name
 			}
 		}
 	}

@@ -94,12 +94,56 @@ func (st *State) NewCAASModel(args CAASModelArgs) (*CAASModel, *CAASState, error
 		return nil, nil, errors.Annotate(err, "could not start state for new caas model")
 	}
 
-	caasModel, err := caasSt.Model()
+	caasModel, err := caasSt.CAASModel()
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
 
 	return caasModel, caasSt, nil
+}
+
+// CAASModel returns the model entity.
+func (st *State) CAASModel() (*CAASModel, error) {
+	return st.GetCAASModel(st.modelTag)
+}
+
+// GetCAASModel looks for the CAAS model identified by the uuid passed in.
+func (st *State) GetCAASModel(tag names.ModelTag) (*CAASModel, error) {
+	models, closer := st.getCollection(caasModelsC)
+	defer closer()
+
+	caasSt, err := st.ForCAASModel(tag)
+	if err != nil {
+		return nil, errors.Annotate(err, "could not create state for caas model")
+	}
+	model := &CAASModel{st: caasSt}
+	if err := model.refresh(models.FindId(tag.Id())); err != nil {
+		return nil, errors.Trace(err)
+	}
+	return model, nil
+}
+
+// AllCAASModels returns all the CAAS models in the system.
+func (st *State) AllCAASModels() ([]*CAASModel, error) {
+        models, closer := st.getCollection(caasModelsC)
+        defer closer()
+
+        var caasModelDocs []caasModelDoc
+        err := models.Find(nil).Sort("name", "owner").All(&caasModelDocs)
+        if err != nil {
+                return nil, err
+        }
+
+        result := make([]*CAASModel, len(caasModelDocs))
+        for i, doc := range caasModelDocs {
+		caasSt, err := st.ForCAASModel(names.NewModelTag(doc.UUID))
+		if err != nil {
+			return nil, errors.Annotate(err, "could not create state for caas model")
+		}
+                result[i] = &CAASModel{st: caasSt, doc: doc}
+        }
+
+        return result, nil
 }
 
 func (st *State) IsCAASModel(uuid string) (bool, error) {
@@ -112,8 +156,28 @@ func (st *State) IsCAASModel(uuid string) (bool, error) {
 	return n > 0, nil
 }
 
+// ModelTag is the concrete model tag for this model.
+func (m *CAASModel) ModelTag() names.ModelTag {
+	return names.NewModelTag(m.doc.UUID)
+}
+
+// Owner returns tag representing the owner of the model.
+// The owner is the user that created the model.
+func (m *CAASModel) Owner() names.UserTag {
+	return names.NewUserTag(m.doc.Owner)
+}
+
+func (m *CAASModel) Name() string {
+	return m.doc.Name
+}
+
 func (m *CAASModel) UUID() string {
 	return m.doc.UUID
+}
+
+func (m *CAASModel) Type() string {
+	// XXX return a const/enum.
+	return "caas"
 }
 
 func (m *CAASModel) Refresh() error {

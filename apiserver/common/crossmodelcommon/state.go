@@ -135,7 +135,8 @@ type userModelShim struct {
 }
 
 func (um *userModelShim) Model() Model {
-	return &modelShim{um.UserModel.Model}
+	// XXX CAAS
+	return &modelShim{um.UserModel.IAASModel()}
 }
 
 func (s *stateShim) RemoteConnectionStatus(offerName string) (RemoteConnectionStatus, error) {
