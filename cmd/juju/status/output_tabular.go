@@ -22,6 +22,8 @@ import (
 	"github.com/juju/juju/status"
 )
 
+const maxVersionWidth = 15
+
 type statusRelation struct {
 	application1 string
 	application2 string
@@ -81,20 +83,133 @@ func (r *relationFormatter) get(k string) *statusRelation {
 // units. Any subordinate items are indented by two spaces beneath
 // their superior.
 func FormatTabular(writer io.Writer, forceColor bool, value interface{}) error {
-	const maxVersionWidth = 15
-	const ellipsis = "..."
-	const truncatedWidth = maxVersionWidth - len(ellipsis)
-
 	fs, valueConverted := value.(formattedStatus)
 	if !valueConverted {
 		return errors.Errorf("expected value of type %T, got %T", fs, value)
 	}
 
 	if fs.caasStatus != nil {
-		return errors.Errorf("formatting for CAAS status is unimplemented")
+		return formatTabularCAAS(writer, forceColor, fs.caasStatus)
 	}
-	fis := fs.iaasStatus
-	model := fis.Model
+	return formatTabularIAAS(writer, forceColor, fs.iaasStatus)
+}
+
+func formatTabularCAAS(writer io.Writer, forceColor bool, fs *formattedCAASStatus) error {
+	model := fs.Model
+
+	// To format things into columns.
+	tw := output.TabWriter(writer)
+	if forceColor {
+		tw.SetColorCapable(forceColor)
+	}
+	w := output.Wrapper{tw}
+	p := w.Println
+	outputHeaders := func(values ...interface{}) {
+		p()
+		p(values...)
+	}
+
+	cloudRegion := model.Cloud
+	if model.CloudRegion != "" {
+		cloudRegion += "/" + model.CloudRegion
+	}
+
+	header := []interface{}{"Model", "Controller", "Cloud/Region", "Version"}
+	values := []interface{}{model.Name, model.Controller, cloudRegion, model.Version}
+	message := getModelMessage(model)
+	if message != "" {
+		header = append(header, "Notes")
+		values = append(values, message)
+	}
+	if model.SLA != "" {
+		header = append(header, "SLA")
+		values = append(values, model.SLA)
+	}
+
+	// The first set of headers don't use outputHeaders because it adds the blank line.
+	p(header...)
+	p(values...)
+
+	units := make(map[string]caasUnitStatus)
+	relations := newRelationFormatter()
+	outputHeaders("App", "Version", "Status", "Scale", "Charm", "Store", "Rev", "Notes")
+	tw.SetColumnAlignRight(3)
+	tw.SetColumnAlignRight(6)
+	for _, appName := range utils.SortStringsNaturally(stringKeysFromMap(fs.Applications)) {
+		app := fs.Applications[appName]
+		version := limitWidth(app.Version, maxVersionWidth)
+		w.Print(appName, version)
+		w.PrintStatus(app.StatusInfo.Current)
+		scale, warn := fs.applicationScale(appName)
+		if warn {
+			w.PrintColor(output.WarningHighlight, scale)
+		} else {
+			w.Print(scale)
+		}
+		// Notes may well contain other things later.
+		notes := ""
+		p(app.CharmName, app.CharmOrigin, app.CharmRev, notes)
+
+		for un, u := range app.Units {
+			units[un] = u
+		}
+		// Ensure that we pick a consistent name for peer relations.
+		sortedRelTypes := make([]string, 0, len(app.Relations))
+		for relType := range app.Relations {
+			sortedRelTypes = append(sortedRelTypes, relType)
+		}
+		sort.Strings(sortedRelTypes)
+
+		subs := set.NewStrings(app.SubordinateTo...)
+		for _, relType := range sortedRelTypes {
+			for _, related := range app.Relations[relType] {
+				relations.add(related, appName, relType, subs.Contains(related))
+			}
+		}
+
+	}
+
+	pUnit := func(name string, u caasUnitStatus, level int) {
+		message := u.WorkloadStatusInfo.Message
+		agentDoing := agentDoing(u.JujuStatusInfo)
+		if agentDoing != "" {
+			message = fmt.Sprintf("(%s) %s", agentDoing, message)
+		}
+		if u.Leader {
+			name += "*"
+		}
+		w.Print(indent("", level*2, name))
+		w.PrintStatus(u.WorkloadStatusInfo.Current)
+		w.PrintStatus(u.JujuStatusInfo.Current)
+		p(
+			u.PublicAddress,
+			strings.Join(u.OpenedPorts, ","),
+			message,
+		)
+	}
+
+	outputHeaders("Unit", "Workload", "Agent", "Public address", "Ports", "Message")
+	for _, name := range utils.SortStringsNaturally(stringKeysFromMap(units)) {
+		u := units[name]
+		pUnit(name, u, 0)
+	}
+
+	if relations.len() > 0 {
+		outputHeaders("Relation", "Provides", "Consumes", "Type")
+		for _, k := range relations.sorted() {
+			r := relations.get(k)
+			if r != nil {
+				p(r.relation, r.application1, r.application2, r.relationType())
+			}
+		}
+	}
+
+	tw.Flush()
+	return nil
+}
+
+func formatTabularIAAS(writer io.Writer, forceColor bool, fs *formattedIAASStatus) error {
+	model := fs.Model
 
 	// To format things into columns.
 	tw := output.TabWriter(writer)
@@ -131,10 +246,10 @@ func FormatTabular(writer io.Writer, forceColor bool, value interface{}) error {
 	p(header...)
 	p(values...)
 
-	if len(fis.RemoteApplications) > 0 {
+	if len(fs.RemoteApplications) > 0 {
 		outputHeaders("SAAS name", "Status", "Store", "URL")
-		for _, appName := range utils.SortStringsNaturally(stringKeysFromMap(fis.RemoteApplications)) {
-			app := fis.RemoteApplications[appName]
+		for _, appName := range utils.SortStringsNaturally(stringKeysFromMap(fs.RemoteApplications)) {
+			app := fs.RemoteApplications[appName]
 			var store, urlPath string
 			url, err := crossmodel.ParseApplicationURL(app.ApplicationURL)
 			if err == nil {
@@ -159,25 +274,21 @@ func FormatTabular(writer io.Writer, forceColor bool, value interface{}) error {
 	outputHeaders("App", "Version", "Status", "Scale", "Charm", "Store", "Rev", "OS", "Notes")
 	tw.SetColumnAlignRight(3)
 	tw.SetColumnAlignRight(6)
-	for _, appName := range utils.SortStringsNaturally(stringKeysFromMap(fis.Applications)) {
-		app := fis.Applications[appName]
-		version := app.Version
-		// Don't let a long version push out the version column.
-		if len(version) > maxVersionWidth {
-			version = version[:truncatedWidth] + ellipsis
+	for _, appName := range utils.SortStringsNaturally(stringKeysFromMap(fs.Applications)) {
+		app := fs.Applications[appName]
+		version := limitWidth(app.Version, maxVersionWidth)
+		w.Print(appName, version)
+		w.PrintStatus(app.StatusInfo.Current)
+		scale, warn := fs.applicationScale(appName)
+		if warn {
+			w.PrintColor(output.WarningHighlight, scale)
+		} else {
+			w.Print(scale)
 		}
 		// Notes may well contain other things later.
 		notes := ""
 		if app.Exposed {
 			notes = "exposed"
-		}
-		w.Print(appName, version)
-		w.PrintStatus(app.StatusInfo.Current)
-		scale, warn := fis.applicationScale(appName)
-		if warn {
-			w.PrintColor(output.WarningHighlight, scale)
-		} else {
-			w.Print(scale)
 		}
 		p(app.CharmName,
 			app.CharmOrigin,
@@ -257,7 +368,7 @@ func FormatTabular(writer io.Writer, forceColor bool, value interface{}) error {
 	}
 
 	p()
-	printMachines(tw, fis.Machines)
+	printMachines(tw, fs.Machines)
 
 	if relations.len() > 0 {
 		outputHeaders("Relation", "Provides", "Consumes", "Type")

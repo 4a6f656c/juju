@@ -234,6 +234,29 @@ type unitStatus struct {
 	Subordinates  map[string]unitStatus `json:"subordinates,omitempty" yaml:"subordinates,omitempty"`
 }
 
+func (s *formattedCAASStatus) applicationScale(name string) (string, bool) {
+	// The current unit count are units that are either in Idle or Executing status.
+	// In other words, units that are active and available.
+	currentUnitCount := 0
+	desiredUnitCount := 0
+
+	app := s.Applications[name]
+	match := func(u caasUnitStatus) {
+		desiredUnitCount += 1
+		switch u.JujuStatusInfo.Current {
+		case status.Executing, status.Idle:
+			currentUnitCount += 1
+		}
+	}
+	for _, u := range app.Units {
+		match(u)
+	}
+	if currentUnitCount == desiredUnitCount {
+		return fmt.Sprint(currentUnitCount), false
+	}
+	return fmt.Sprintf("%d/%d", currentUnitCount, desiredUnitCount), true
+}
+
 func (s *formattedIAASStatus) applicationScale(name string) (string, bool) {
 	// The current unit count are units that are either in Idle or Executing status.
 	// In other words, units that are active and available.
