@@ -7,21 +7,20 @@ import (
 	"github.com/juju/errors"
 	"github.com/juju/loggo"
 	"gopkg.in/juju/names.v2"
-	"gopkg.in/juju/worker.v1"
+	worker "gopkg.in/juju/worker.v1"
 
 	"github.com/juju/juju/agent"
+	apicaasprovisioner "github.com/juju/juju/api/caasprovisioner"
 	"github.com/juju/juju/network"
-	"github.com/juju/juju/state"
 	"github.com/juju/juju/version"
-	"github.com/juju/juju/worker/caasmodelworkermanager"
 	"github.com/juju/juju/worker/catacomb"
 )
 
 var logger = loggo.GetLogger("juju.workers.caasprovisioner")
 
-func New(newState caasmodelworkermanager.NewStateFunc) (worker.Worker, error) {
+func New(st *apicaasprovisioner.State, agentConfig agent.Config) (worker.Worker, error) {
 	p := &provisioner{
-		newState: newState,
+		st: st,
 	}
 	err := catacomb.Invoke(catacomb.Plan{
 		Site: &p.catacomb,
@@ -35,7 +34,7 @@ func New(newState caasmodelworkermanager.NewStateFunc) (worker.Worker, error) {
 
 type provisioner struct {
 	catacomb catacomb.Catacomb
-	newState caasmodelworkermanager.NewStateFunc
+	st *apicaasprovisioner.State
 }
 
 // Kill is part of the worker.Worker interface.
@@ -49,35 +48,34 @@ func (p *provisioner) Wait() error {
 }
 
 func (p *provisioner) loop() error {
-	st, err := p.newState()
-	if err != nil {
-		return errors.Annotate(err, "opening state")
-	}
-	defer st.Close()
-
 	// XXX this assumes the k8s credentials never change. This is fine
 	// for the prototype but needs to be considered for any real
 	// implementation.
-	client, err := newK8sClient(st)
+	client, err := newK8sClient(p.st)
 	if err != nil {
 		return errors.Annotate(err, "creating k8s client")
 	}
 
 	newConfig := func(appName string) ([]byte, error) {
-		return newOperatorConfig(appName, st)
+		return newOperatorConfig(appName, p.st)
 	}
 
 	// XXX this loop should also keep an eye on kubernetes and ensure
 	// that the operator stays up, redeploying it if the pod goes
 	// away. For some runtimes we *could* rely on the the runtime's
 	// features to do this.
-	w := st.WatchApplications()
+	w, err := p.st.WatchApplications()
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	p.catacomb.Add(w)
 	for {
 		select {
 		case apps := <-w.Changes():
 			for _, app := range apps {
-				logger.Infof("saw app: %s", app)
+				logger.Infof("Recevied change notification for app: %s", app)
+				//st.FindEntity
 				if err := ensureOperator(client, app, newConfig); err != nil {
 					// XXX need retry logic rather than just giving up
 					// (see queue concept in storage provisioner)
@@ -91,7 +89,7 @@ func (p *provisioner) loop() error {
 	}
 }
 
-func newOperatorConfig(appName string, st *state.CAASState) ([]byte, error) {
+func newOperatorConfig(appName string, st *apicaasprovisioner.State) ([]byte, error) {
 	appTag := names.NewApplicationTag(appName)
 
 	apiAddrs, err := apiAddresses(st)
@@ -119,8 +117,8 @@ func newOperatorConfig(appName string, st *state.CAASState) ([]byte, error) {
 			UpgradedToVersion: version.Current,
 			Tag:               appTag,
 			Password:          "XXX not currently checked",
-			Controller:        st.ControllerTag(),
-			Model:             st.ModelTag(),
+		//	Controller:        st.ControllerTag(),
+		//	Model:             st.ModelTag(),
 			APIAddresses:      apiAddrs,
 			CACert:            caCert,
 		},
@@ -136,7 +134,7 @@ func newOperatorConfig(appName string, st *state.CAASState) ([]byte, error) {
 	return confBytes, nil
 }
 
-func apiAddresses(st *state.CAASState) ([]string, error) {
+func apiAddresses(st *apicaasprovisioner.State) ([]string, error) {
 	apiHostPorts, err := st.APIHostPorts()
 	if err != nil {
 		return nil, err

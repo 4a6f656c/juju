@@ -5,6 +5,7 @@ package state
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/juju/errors"
 	"github.com/juju/loggo"
@@ -280,14 +281,19 @@ func (u *CAASUnit) Destroy() (err error) {
 		}
 		return nil, jujutxn.ErrNoOperations
 	}
+fmt.Fprintf(os.Stderr, "unit destroy txn\n")
 	if err = unit.st.db().Run(buildTxn); err == nil {
+fmt.Fprintf(os.Stderr, "unit destroy txn done\n")
 		if historyErr := unit.eraseHistory(); historyErr != nil {
 			logger.Errorf("cannot delete history for unit %q: %v", unit.globalKey(), err)
 		}
+fmt.Fprintf(os.Stderr, "erase history done\n")
 		if err = unit.Refresh(); errors.IsNotFound(err) {
+fmt.Fprintf(os.Stderr, "unit refresh = not found\n")
 			return nil
 		}
 	}
+fmt.Fprintf(os.Stderr, "unit destroy %v\n", err)
 	return err
 }
 
@@ -716,7 +722,7 @@ func (u *CAASUnit) assertCharmOps(ch *Charm) []txn.Op {
 	if _, ok := u.CharmURL(); !ok {
 		appName := u.ApplicationName()
 		ops = append(ops, txn.Op{
-			C:      applicationsC,
+			C:      caasApplicationsC,
 			Id:     appName,
 			Assert: bson.D{{"charmurl", ch.URL()}},
 		})

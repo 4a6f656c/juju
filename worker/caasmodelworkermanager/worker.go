@@ -28,7 +28,7 @@ type NewStateFunc func() (*state.CAASState, error)
 // NewWorkerFunc should return a worker responsible for running
 // all a model's required workers; and for returning nil when
 // there's no more model to manage.
-type NewWorkerFunc func(string, NewStateFunc) (worker.Worker, error)
+type NewWorkerFunc func(string, string) (worker.Worker, error)
 
 // Config holds the dependencies and configuration necessary to run
 // a model worker manager.
@@ -134,14 +134,7 @@ func (m *caasModelWorkerManager) starter(modelUUID string) func() (worker.Worker
 	return func() (worker.Worker, error) {
 		logger.Debugf("starting workers for CAAS model %q", modelUUID)
 
-		// XXX CAAS: this is bad! Workers should never use
-		// *State/*CAASState directly. This is purely a shortcut for
-		// the CAAS prototype and should never make it into production
-		// code.
-		newCAASState := func() (*state.CAASState, error) {
-			return m.config.Backend.ForCAASModel(names.NewModelTag(modelUUID))
-		}
-		worker, err := m.config.NewWorker(modelUUID, newCAASState)
+		worker, err := m.config.NewWorker(m.config.ControllerUUID, modelUUID)
 		if err != nil {
 			return nil, errors.Annotatef(err, "cannot manage CAAS model %q", modelUUID)
 		}

@@ -56,9 +56,9 @@ type ManifoldConfig struct {
 // made as configured.
 func Manifold(config ManifoldConfig) dependency.Manifold {
 	inputs := []string{config.AgentName}
-	if config.APIConfigWatcherName != "" {
+	//if config.APIConfigWatcherName != "" {
 		inputs = append(inputs, config.APIConfigWatcherName)
-	}
+	//}
 	return dependency.Manifold{
 		Inputs: inputs,
 		Output: outputFunc,

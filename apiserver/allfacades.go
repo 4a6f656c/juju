@@ -23,6 +23,7 @@ import (
 	"github.com/juju/juju/apiserver/caasapplication"
 	"github.com/juju/juju/apiserver/caasclient"
 	"github.com/juju/juju/apiserver/caasoperator"
+	"github.com/juju/juju/apiserver/caasprovisioner"
 	"github.com/juju/juju/apiserver/charmrevisionupdater"
 	"github.com/juju/juju/apiserver/charms" // ModelUser Write
 	"github.com/juju/juju/apiserver/cleaner"
@@ -132,7 +133,7 @@ func AllFacades() *facade.Registry {
 	reg("Bundle", 1, bundle.NewFacade)
 	reg("CharmRevisionUpdater", 2, charmrevisionupdater.NewCharmRevisionUpdaterAPI)
 	reg("Charms", 2, charms.NewFacade)
-	reg("Cleaner", 2, cleaner.NewCleanerAPI)
+	reg("Cleaner", 2, cleaner.NewFacade)
 	reg("Client", 1, client.NewFacade)
 	reg("Cloud", 1, cloud.NewFacade)
 	reg("Controller", 3, controller.NewControllerAPI)
@@ -223,6 +224,7 @@ func AllFacades() *facade.Registry {
 	reg("CAASApplication", 1, caasapplication.NewFacade)
 	reg("CAASClient", 1, caasclient.NewFacade)
 	reg("CAASOperator", 1, caasoperator.NewFacade)
+	reg("CAASProvisioner", 1, caasprovisioner.NewFacade)
 
 	regRaw("AllWatcher", 1, NewAllWatcher, reflect.TypeOf((*SrvAllWatcher)(nil)))
 	// Note: AllModelWatcher uses the same infrastructure as AllWatcher

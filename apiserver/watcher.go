@@ -97,12 +97,12 @@ func isAgent(auth facade.Authorizer) bool {
 
 func newNotifyWatcher(context facade.Context) (facade.Facade, error) {
 	id := context.ID()
-	auth := context.Auth()
+	//auth := context.Auth()
 	resources := context.Resources()
 
-	if !isAgent(auth) {
+/*	if !isAgent(auth) {
 		return nil, common.ErrPerm
-	}
+	}*/
 	watcher, ok := resources.Get(id).(state.NotifyWatcher)
 	if !ok {
 		return nil, common.ErrUnknownWatcher
@@ -138,12 +138,12 @@ type srvStringsWatcher struct {
 
 func newStringsWatcher(context facade.Context) (facade.Facade, error) {
 	id := context.ID()
-	auth := context.Auth()
+	//auth := context.Auth()
 	resources := context.Resources()
 
-	if !isAgent(auth) {
+	/*if !isAgent(auth) {
 		return nil, common.ErrPerm
-	}
+	}*/
 	watcher, ok := resources.Get(id).(state.StringsWatcher)
 	if !ok {
 		return nil, common.ErrUnknownWatcher

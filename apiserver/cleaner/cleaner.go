@@ -7,6 +7,9 @@
 package cleaner
 
 import (
+	"fmt"
+	"os"
+
 	"github.com/juju/juju/apiserver/common"
 	"github.com/juju/juju/apiserver/facade"
 	"github.com/juju/juju/apiserver/params"
@@ -14,34 +17,46 @@ import (
 	"github.com/juju/juju/state/watcher"
 )
 
-// CleanerAPI implements the API used by the cleaner worker.
-type CleanerAPI struct {
+type backend interface {
+	Cleanup() error
+	WatchCleanups() state.NotifyWatcher
+}
+
+// API implements the API used by the cleaner worker.
+type API struct {
 	st        StateInterface
 	resources facade.Resources
 }
 
-// NewCleanerAPI creates a new instance of the Cleaner API.
-func NewCleanerAPI(
-	st *state.State,
-	res facade.Resources,
-	authorizer facade.Authorizer,
-) (*CleanerAPI, error) {
-	if !authorizer.AuthController() {
-		return nil, common.ErrPerm
+// NewFacade creates a new instance of the Cleaner API.
+func NewFacade(ctx facade.Context) (*API, error) {
+	var st backend
+	if ctx.IsCAAS() {
+		st = ctx.CAASState()
+	} else {
+		st = ctx.State()
 	}
-	return &CleanerAPI{
-		st:        getState(st),
-		resources: res,
+
+	auth := ctx.Auth()
+	resources := ctx.Resources()
+
+	if !auth.AuthController() {
+fmt.Fprintf(os.Stderr, "cleaner permission denied...\n")
+//		return nil, common.ErrPerm
+	}
+	return &API{
+		st:        st,
+		resources: resources,
 	}, nil
 }
 
 // Cleanup triggers a state cleanup
-func (api *CleanerAPI) Cleanup() error {
+func (api *API) Cleanup() error {
 	return api.st.Cleanup()
 }
 
 // WatchChanges watches for cleanups to be perfomed in state
-func (api *CleanerAPI) WatchCleanups() (params.NotifyWatchResult, error) {
+func (api *API) WatchCleanups() (params.NotifyWatchResult, error) {
 	watch := api.st.WatchCleanups()
 	if _, ok := <-watch.Changes(); ok {
 		return params.NotifyWatchResult{

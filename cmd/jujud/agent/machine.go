@@ -81,7 +81,6 @@ import (
 	jworker "github.com/juju/juju/worker"
 	"github.com/juju/juju/worker/apicaller"
 	"github.com/juju/juju/worker/caasmodelworkermanager"
-	"github.com/juju/juju/worker/caasprovisioner"
 	"github.com/juju/juju/worker/certupdater"
 	"github.com/juju/juju/worker/conv2state"
 	"github.com/juju/juju/worker/dblogpruner"
@@ -120,8 +119,9 @@ var (
 	newUpgradeMongoWorker = mongoupgrader.New
 	reportOpenedState     = func(*state.State) {}
 
-	modelManifolds   = model.Manifolds
-	machineManifolds = machine.Manifolds
+	caasModelManifolds = model.CAASManifolds
+	modelManifolds     = model.Manifolds
+	machineManifolds   = machine.Manifolds
 )
 
 // Variable to override in tests, default is true
@@ -1153,15 +1153,49 @@ func (a *MachineAgent) startModelWorkers(controllerUUID, modelUUID string) (work
 	return engine, nil
 }
 
-func (a *MachineAgent) startCAASModelWorkers(
-	modelUUID string,
-	newState caasmodelworkermanager.NewStateFunc,
-) (worker.Worker, error) {
+func (a *MachineAgent) startCAASModelWorkers(controllerUUID, modelUUID string) (worker.Worker, error) {
 	logger.Infof("starting CAAS workers for %s", modelUUID)
 
-	// XXX eventually we'll need a full dependency engine here (with
-	// upgrade handling, a life flag etc), but this will do for now.
-	return caasprovisioner.New(newState)
+	modelAgent, err := model.WrapAgent(a, controllerUUID, modelUUID)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	engine, err := dependency.NewEngine(dependency.EngineConfig{
+		IsFatal:     model.IsFatal,
+		WorstError:  model.WorstError,
+		Filter:      model.IgnoreErrRemoved,
+		ErrorDelay:  3 * time.Second,
+		BounceDelay: 10 * time.Millisecond,
+	})
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	manifolds := caasModelManifolds(model.ManifoldsConfig{
+		Agent:                       modelAgent,
+		AgentConfigChanged:          a.configChangedVal,
+		Clock:                       clock.WallClock,
+		RunFlagDuration:             time.Minute,
+		CharmRevisionUpdateInterval: 24 * time.Hour,
+		InstPollerAggregationDelay:  3 * time.Second,
+		// TODO(perrito666) the status history pruning numbers need
+		// to be adjusting, after collecting user data from large install
+		// bases, to numbers allowing a rich and useful back history.
+		StatusHistoryPrunerMaxHistoryTime: 336 * time.Hour, // 2 weeks
+		StatusHistoryPrunerMaxHistoryMB:   5120,            // 5G
+		StatusHistoryPrunerInterval:       5 * time.Minute,
+		SpacesImportedGate:                a.discoverSpacesComplete,
+		NewEnvironFunc:                    newEnvirons,
+		NewMigrationMaster:                migrationmaster.NewWorker,
+	})
+	if err := dependency.Install(engine, manifolds); err != nil {
+		if err := worker.Stop(engine); err != nil {
+			logger.Errorf("while stopping engine with bad manifolds: %v", err)
+		}
+		return nil, errors.Trace(err)
+	}
+	return engine, nil
 }
 
 // stateWorkerDialOpts is a mongo.DialOpts suitable

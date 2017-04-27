@@ -1767,6 +1767,11 @@ func (st *State) WatchCleanups() NotifyWatcher {
 	return newNotifyCollWatcher(st, cleanupsC, isLocalID(st))
 }
 
+// WatchCleanups starts and returns a CleanupWatcher.
+func (st *CAASState) WatchCleanups() NotifyWatcher {
+	return newNotifyCollWatcher(st, cleanupsC, isLocalID(st))
+}
+
 // actionStatusWatcher is a StringsWatcher that filters notifications
 // to Action Id's that match the ActionReceiver and ActionStatus set
 // provided.

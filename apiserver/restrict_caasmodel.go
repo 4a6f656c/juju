@@ -14,7 +14,10 @@ import (
 // and IAAS models.
 var commonModelFacadeNames = set.NewStrings(
 	"Charms",
+	"Cleaner",
+	"NotifyWatcher",
 	"Pinger",
+	"StringsWatcher",
 )
 
 // caasModelFacadeNames lists facades that are only used with CAAS
@@ -23,6 +26,7 @@ var caasModelFacadeNames = set.NewStrings(
 	"CAASApplication",
 	"CAASClient",
 	"CAASOperator",
+	"CAASProvisioner",
 )
 
 func caasModelFacadesOnly(facadeName, _ string) error {

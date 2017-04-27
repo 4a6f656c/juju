@@ -40,6 +40,12 @@ type WatchContainers struct {
 	Params []WatchContainer `json:"params"`
 }
 
+// WatchApplications holds the arguments for making a WatchApplications
+// API call.
+type WatchApplications struct {
+	Params []string `json:"application-tag"`
+}
+
 // CharmURL identifies a single charm URL.
 type CharmURL struct {
 	URL string `json:"url"`

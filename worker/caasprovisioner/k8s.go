@@ -11,18 +11,14 @@ import (
 	"k8s.io/client-go/pkg/api/v1"
 	"k8s.io/client-go/rest"
 
-	"github.com/juju/juju/state"
+	apicaasprovisioner "github.com/juju/juju/api/caasprovisioner"
 )
 
 // XXX should be using a juju specific namespace
 const namespace = "default"
 
-func newK8sClient(st *state.CAASState) (*kubernetes.Clientset, error) {
-	model, err := st.CAASModel()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	config := newK8sConfig(model)
+func newK8sClient(st *apicaasprovisioner.State) (*kubernetes.Clientset, error) {
+	config := newK8sConfig(st)
 	client, err := kubernetes.NewForConfig(config)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -30,13 +26,13 @@ func newK8sClient(st *state.CAASState) (*kubernetes.Clientset, error) {
 	return client, nil
 }
 
-func newK8sConfig(model *state.CAASModel) *rest.Config {
+func newK8sConfig(st *apicaasprovisioner.State) *rest.Config {
 	return &rest.Config{
-		Host: model.Endpoint(),
+		//Host: st.Endpoint(),
 		TLSClientConfig: rest.TLSClientConfig{
-			CertData: model.CertData(),
-			KeyData:  model.KeyData(),
-			CAData:   model.CAData(),
+//			CertData: st.CertData(),
+//			KeyData:  st.KeyData(),
+//			CAData:   st.CAData(),
 		},
 	}
 }
