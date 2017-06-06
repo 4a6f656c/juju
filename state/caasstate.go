@@ -126,6 +126,26 @@ func (st *CAASState) ModelTag() names.ModelTag {
 	return st.modelTag
 }
 
+func (st *CAASState) AllIAASModels() ([]*Model, error) {
+	models, closer := st.db().GetCollection(modelsC)
+	defer closer()
+
+	var modelDocs []modelDoc
+	err := models.Find(nil).Sort("name", "owner").All(&modelDocs)
+	if err != nil {
+		return nil, err
+	}
+
+	result := make([]*Model, len(modelDocs))
+	for i, doc := range modelDocs {
+		// XXX CAAS these do not have st set, so can only be
+		// queried, not manipulated.
+		result[i] = &Model{doc: doc}
+	}
+
+	return result, nil
+}
+
 func (st *CAASState) CAASModel() (*CAASModel, error) {
 	models, closer := st.database.GetCollection(caasModelsC)
 	defer closer()
@@ -485,12 +505,12 @@ outer:
 }
 
 func caasApplicationByName(st *CAASState, name string) (ApplicationEntity, error) {
-	/*s, err := st.RemoteApplication(name)
+	s, err := st.RemoteApplication(name)
 	if err == nil {
 		return s, nil
 	} else if err != nil && !errors.IsNotFound(err) {
 		return nil, err
-	}*/
+	}
 	return st.CAASApplication(name)
 }
 
@@ -584,29 +604,29 @@ func (st *CAASState) AddRelation(eps ...Endpoint) (r *Relation, err error) {
 			if err != nil {
 				return nil, err
 			}
-			/*if svc.IsRemote() {
+			if svc.IsRemote() {
 				ops = append(ops, txn.Op{
 					C:      remoteApplicationsC,
 					Id:     st.docID(ep.ApplicationName),
 					Assert: bson.D{{"life", Alive}},
 					Update: bson.D{{"$inc", bson.D{{"relationcount", 1}}}},
 				})
-			} else {*/
-			localSvc := svc.(*CAASApplication)
-			ch, _, err := localSvc.Charm()
-			if err != nil {
-				return nil, errors.Trace(err)
+			} else {
+				localSvc := svc.(*CAASApplication)
+				ch, _, err := localSvc.Charm()
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+				if !ep.ImplementedBy(ch) {
+					return nil, errors.Errorf("%q does not implement %q", ep.ApplicationName, ep)
+				}
+				ops = append(ops, txn.Op{
+					C:      caasApplicationsC,
+					Id:     st.docID(ep.ApplicationName),
+					Assert: bson.D{{"life", Alive}, {"charmurl", ch.URL()}},
+					Update: bson.D{{"$inc", bson.D{{"relationcount", 1}}}},
+				})
 			}
-			if !ep.ImplementedBy(ch) {
-				return nil, errors.Errorf("%q does not implement %q", ep.ApplicationName, ep)
-			}
-			ops = append(ops, txn.Op{
-				C:      caasApplicationsC,
-				Id:     st.docID(ep.ApplicationName),
-				Assert: bson.D{{"life", Alive}, {"charmurl", ch.URL()}},
-				Update: bson.D{{"$inc", bson.D{{"relationcount", 1}}}},
-			})
-			/*}*/
 		}
 
 		// Create a new unique id if that has not already been done, and add

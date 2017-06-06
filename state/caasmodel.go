@@ -161,6 +161,11 @@ func (m *CAASModel) ModelTag() names.ModelTag {
 	return names.NewModelTag(m.doc.UUID)
 }
 
+// Life returns whether the model is Alive, Dying or Dead.
+func (m *CAASModel) Life() Life {
+	return m.doc.Life
+}
+
 // Owner returns tag representing the owner of the model.
 // The owner is the user that created the model.
 func (m *CAASModel) Owner() names.UserTag {
@@ -208,6 +213,11 @@ func (m *CAASModel) refresh(query mongo.Query) error {
 		return errors.NotFoundf("caas model")
 	}
 	return err
+}
+
+// assertAliveOp returns a txn.Op that asserts the model is alive.
+func (m *CAASModel) assertActiveOp() txn.Op {
+	return assertCAASModelActiveOp(m.UUID())
 }
 
 // assertCAASModelActiveOp returns a txn.Op that asserts the given

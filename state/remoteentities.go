@@ -32,12 +32,16 @@ type tokenDoc struct {
 // RemoteEntities wraps State to provide access
 // to the remote entities collection.
 type RemoteEntities struct {
-	st *State
+	st modelBackend
 }
 
 // RemoteEntities returns a wrapped state instance providing
 // access to the remote entities collection.
 func (st *State) RemoteEntities() *RemoteEntities {
+	return &RemoteEntities{st}
+}
+
+func (st *CAASState) RemoteEntities() *RemoteEntities {
 	return &RemoteEntities{st}
 }
 
@@ -50,7 +54,15 @@ func (st *State) RemoteEntities() *RemoteEntities {
 // a second api call is not required by the caller to get the token.
 func (r *RemoteEntities) ExportLocalEntity(entity names.Tag) (string, error) {
 	var token string
-	sourceModel := r.st.ModelTag()
+	var sourceModel names.ModelTag
+	switch st := r.st.(type) {
+	case *CAASState:
+		sourceModel = st.ModelTag()
+	case *State:
+		sourceModel = st.ModelTag()
+	default:
+		return "", errors.Errorf("unknown state type %t", r.st)
+	}
 	ops := func(attempt int) ([]txn.Op, error) {
 		// The entity must not already be exported.
 		var err error
@@ -95,7 +107,7 @@ func (r *RemoteEntities) ExportLocalEntity(entity names.Tag) (string, error) {
 		}}
 		return aa, nil
 	}
-	if err := r.st.run(ops); err != nil {
+	if err := r.st.db().Run(ops); err != nil {
 		// Where error is AlreadyExists, we still return the
 		// token so that a second api call is not required by
 		// the caller to get the token.
@@ -116,7 +128,7 @@ func (r *RemoteEntities) ImportRemoteEntity(
 		return errors.NotValidf("empty token for %v in model %v", entity.Id(), sourceModel.Id())
 	}
 	ops := r.importRemoteEntityOps(sourceModel, entity, token)
-	err := r.st.runTransaction(ops)
+	err := r.st.db().RunTransaction(ops)
 	if err == txn.ErrAborted {
 		return errors.AlreadyExistsf(
 			"reference to %s in %s",
@@ -156,12 +168,22 @@ func (r *RemoteEntities) RemoveRemoteEntity(
 ) error {
 	ops := func(attempt int) ([]txn.Op, error) {
 		token, err := r.GetToken(sourceModel, entity)
+		var modelUUID string
+		var modelTag names.ModelTag
+		switch st := r.st.(type) {
+		case *CAASState:
+			modelUUID, modelTag = st.ModelUUID(), st.ModelTag()
+		case *State:
+			modelUUID, modelTag = st.ModelUUID(), st.ModelTag()
+		default:
+			return nil, errors.Errorf("unknown state type %t", r.st)
+		}
 		if errors.IsNotFound(err) {
-			logger.Debugf("remote entity %v from %v in model %v not found", entity, sourceModel, r.st.ModelUUID())
+			logger.Debugf("remote entity %v from %v in model %v not found", entity, sourceModel, modelUUID)
 			return nil, jujutxn.ErrNoOperations
 		}
 		ops := []txn.Op{r.removeRemoteEntityOp(sourceModel, entity)}
-		if sourceModel == r.st.ModelTag() {
+		if sourceModel == modelTag {
 			ops = append(ops, txn.Op{
 				C:      tokensC,
 				Id:     token,
@@ -170,7 +192,7 @@ func (r *RemoteEntities) RemoveRemoteEntity(
 		}
 		return ops, nil
 	}
-	return r.st.run(ops)
+	return r.st.db().Run(ops)
 }
 
 // removeRemoteEntityOp returns the txn.Op to remove the remote entity

@@ -1240,14 +1240,27 @@ func assertModelActiveOp(modelUUID string) txn.Op {
 	}
 }
 
-func checkModelActive(st *State) error {
-	model, err := st.Model()
-	if (err == nil && model.Life() != Alive) || errors.IsNotFound(err) {
-		return errors.Errorf("model %q is no longer alive", model.Name())
-	} else if err != nil {
-		return errors.Annotate(err, "unable to read model")
-	} else if mode := model.MigrationMode(); mode != MigrationModeNone {
-		return errors.Errorf("model %q is being migrated", model.Name())
+func checkModelActive(backend modelBackend) error {
+	switch st := backend.(type) {
+	case *CAASState:
+		model, err := st.CAASModel()
+		if (err == nil && model.Life() != Alive) || errors.IsNotFound(err) {
+			return errors.Errorf("model %q is no longer alive", model.Name())
+		} else if err != nil {
+			return errors.Annotate(err, "unable to read model")
+		}
+		return nil
+	case *State:
+		model, err := st.Model()
+		if (err == nil && model.Life() != Alive) || errors.IsNotFound(err) {
+			return errors.Errorf("model %q is no longer alive", model.Name())
+		} else if err != nil {
+			return errors.Annotate(err, "unable to read model")
+		} else if mode := model.MigrationMode(); mode != MigrationModeNone {
+			return errors.Errorf("model %q is being migrated", model.Name())
+		}
+		return nil
+	default:
+		return errors.Errorf("unknown state type %t", backend)
 	}
-	return nil
 }

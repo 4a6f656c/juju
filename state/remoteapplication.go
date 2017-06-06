@@ -50,7 +50,7 @@ type remoteEndpointDoc struct {
 	Scope     charm.RelationScope `bson:"scope"`
 }
 
-func newRemoteApplication(st *State, doc *remoteApplicationDoc) *RemoteApplication {
+func newRemoteApplication(st modelBackend, doc *remoteApplicationDoc) *RemoteApplication {
 	app := &RemoteApplication{
 		st:  st,
 		doc: *doc,
@@ -481,17 +481,48 @@ func (p AddRemoteApplicationParams) Validate() error {
 // AddRemoteApplication creates a new remote application record, having the supplied relation endpoints,
 // with the supplied name (which must be unique across all applications, local and remote).
 func (st *State) AddRemoteApplication(args AddRemoteApplicationParams) (_ *RemoteApplication, err error) {
+	return addRemoteApplication(st, args)
+}
+
+func (st *CAASState) AddRemoteApplication(args AddRemoteApplicationParams) (_ *RemoteApplication, err error) {
+	return addRemoteApplication(st, args)
+}
+
+func addRemoteApplication(st modelBackend, args AddRemoteApplicationParams) (_ *RemoteApplication, err error) {
 	defer errors.DeferredAnnotatef(&err, "cannot add remote application %q", args.Name)
 
 	// Sanity checks.
 	if err := args.Validate(); err != nil {
 		return nil, errors.Trace(err)
 	}
-	model, err := st.Model()
-	if err != nil {
-		return nil, errors.Trace(err)
-	} else if model.Life() != Alive {
-		return nil, errors.Errorf("model is no longer alive")
+
+	var assertActiveOps txn.Op
+	var modelUUID string
+	var remoteEntities *RemoteEntities
+
+	switch st := st.(type) {
+	case *CAASState:
+		model, err := st.CAASModel()
+		if err != nil {
+			return nil, errors.Trace(err)
+		} else if model.Life() != Alive {
+			return nil, errors.Errorf("model is no longer alive")
+		}
+		modelUUID = st.ModelUUID()
+		assertActiveOps = model.assertActiveOp()
+		remoteEntities = st.RemoteEntities()
+	case *State:
+		model, err := st.Model()
+		if err != nil {
+			return nil, errors.Trace(err)
+		} else if model.Life() != Alive {
+			return nil, errors.Errorf("model is no longer alive")
+		}
+		modelUUID = st.ModelUUID()
+		assertActiveOps = model.assertActiveOp()
+		remoteEntities = st.RemoteEntities()
+	default:
+		return nil, errors.Errorf("unknown state type %t", st)
 	}
 
 	applicationID := st.docID(args.Name)
@@ -518,7 +549,7 @@ func (st *State) AddRemoteApplication(args AddRemoteApplicationParams) (_ *Remot
 	appDoc.Endpoints = eps
 	app := newRemoteApplication(st, appDoc)
 	statusDoc := statusDoc{
-		ModelUUID:  st.ModelUUID(),
+		ModelUUID:  modelUUID,
 		Status:     status.Unknown,
 		StatusInfo: "waiting for remote connection",
 		Updated:    time.Now().UnixNano(),
@@ -545,7 +576,7 @@ func (st *State) AddRemoteApplication(args AddRemoteApplicationParams) (_ *Remot
 			}
 		}
 		ops := []txn.Op{
-			model.assertActiveOp(),
+			assertActiveOps,
 			createStatusOp(st, app.globalKey(), statusDoc),
 			{
 				C:      remoteApplicationsC,
@@ -560,21 +591,29 @@ func (st *State) AddRemoteApplication(args AddRemoteApplicationParams) (_ *Remot
 		}
 		// If we know the token, import it.
 		if args.Token != "" {
-			importRemoteEntityOps := st.RemoteEntities().importRemoteEntityOps(
+			importRemoteEntityOps := remoteEntities.importRemoteEntityOps(
 				args.SourceModel, app.Tag(), args.Token,
 			)
 			ops = append(ops, importRemoteEntityOps...)
 		}
 		return ops, nil
 	}
-	if err = st.run(buildTxn); err != nil {
+	if err := st.db().Run(buildTxn); err != nil {
 		return nil, errors.Trace(err)
 	}
 	return app, nil
 }
 
 // RemoteApplication returns a remote application state by name.
-func (st *State) RemoteApplication(name string) (_ *RemoteApplication, err error) {
+func (st *State) RemoteApplication(name string) (*RemoteApplication, error) {
+	return remoteApplication(st, name)
+}
+
+func (st *CAASState) RemoteApplication(name string) (*RemoteApplication, error) {
+	return remoteApplication(st, name)
+}
+
+func remoteApplication(st modelBackend, name string) (_ *RemoteApplication, err error) {
 	if !names.IsValidApplication(name) {
 		return nil, errors.NotValidf("remote application name %q", name)
 	}
